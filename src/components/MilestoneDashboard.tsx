@@ -25,6 +25,13 @@ import {
   type DepartmentTrack,
 } from '../data/departments';
 import type { DailyInsightEntry } from './InsightsMilestones';
+import {
+  EARNINGS_LEDGER_STORAGE_KEY,
+  WEEKLY_TARGETS_STORAGE_KEY,
+  getDefaultWeeklyTargets,
+  type EarningsLedgerEntry,
+} from './EarningsLedger';
+import { QuickTip } from './QuickTip';
 
 type DashboardChartView = 'combined' | 'momentum' | 'all_tracks';
 
@@ -72,21 +79,8 @@ interface CustomTooltipProps {
 }
 
 const INSIGHTS_STORAGE_KEY = 'pgl03_real_daily_insights_v1';
-const TARGETS_STORAGE_KEY = 'pgl03_weekly_revenue_targets_v1';
+const TARGETS_STORAGE_KEY = WEEKLY_TARGETS_STORAGE_KEY;
 const PKR_RATE = 278;
-
-function getDefaultWeeklyTargets(track: DepartmentTrack): [number, number, number, number] {
-  if (track.category === 'automation') {
-    return [100, 350, 750, 1400];
-  }
-  if (track.category === 'freelancing') {
-    return [75, 250, 550, 1000];
-  }
-  if (track.id === 'youtube') {
-    return [0, 75, 250, 600];
-  }
-  return [25, 100, 300, 650];
-}
 
 function DashboardTooltip({
   active,
@@ -193,6 +187,21 @@ export function MilestoneDashboard({
     return [];
   });
 
+  const [ledgerEntries, setLedgerEntries] = useState<EarningsLedgerEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem(EARNINGS_LEDGER_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          return parsed as EarningsLedgerEntry[];
+        }
+      }
+    } catch {
+      // ignore storage read errors
+    }
+    return [];
+  });
+
   const [customTargetsByTrack, setCustomTargetsByTrack] = useState<
     Record<string, [number, number, number, number]>
   >(() => {
@@ -216,11 +225,25 @@ export function MilestoneDashboard({
         const raw = localStorage.getItem(INSIGHTS_STORAGE_KEY);
         if (!raw) {
           setEntries([]);
-          return;
+        } else {
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) {
+            setEntries(parsed as DailyInsightEntry[]);
+          }
         }
-        const parsed = JSON.parse(raw) as unknown;
-        if (Array.isArray(parsed)) {
-          setEntries(parsed as DailyInsightEntry[]);
+      } catch {
+        // ignore read error
+      }
+
+      try {
+        const rawLedger = localStorage.getItem(EARNINGS_LEDGER_STORAGE_KEY);
+        if (!rawLedger) {
+          setLedgerEntries([]);
+        } else {
+          const parsed = JSON.parse(rawLedger) as unknown;
+          if (Array.isArray(parsed)) {
+            setLedgerEntries(parsed as EarningsLedgerEntry[]);
+          }
         }
       } catch {
         // ignore read error
@@ -229,9 +252,11 @@ export function MilestoneDashboard({
 
     window.addEventListener('storage', syncEntries);
     window.addEventListener('pgl03-insights-updated', syncEntries);
+    window.addEventListener('pgl03-ledger-updated', syncEntries);
     return () => {
       window.removeEventListener('storage', syncEntries);
       window.removeEventListener('pgl03-insights-updated', syncEntries);
+      window.removeEventListener('pgl03-ledger-updated', syncEntries);
     };
   }, []);
 
@@ -241,6 +266,7 @@ export function MilestoneDashboard({
         TARGETS_STORAGE_KEY,
         JSON.stringify(customTargetsByTrack)
       );
+      window.dispatchEvent(new Event('pgl03-targets-updated'));
     } catch {
       // ignore write error
     }
@@ -261,22 +287,32 @@ export function MilestoneDashboard({
     [entries, selectedTrack.id]
   );
 
-  // Bucket real user-logged revenue entries across Week 01 - Week 04 from earliest logged day
+  const trackLedgerEntries = useMemo(
+    () => ledgerEntries.filter((e) => e.trackId === selectedTrack.id),
+    [ledgerEntries, selectedTrack.id]
+  );
+
+  // Bucket real user-logged revenue entries across Week 01 - Week 04 (Insights + Earnings Ledger)
   const weeklyActualRevenue = useMemo<[number, number, number, number]>(() => {
     const buckets: [number, number, number, number] = [0, 0, 0, 0];
-    if (trackEntries.length === 0) return buckets;
+    if (trackEntries.length > 0) {
+      const firstDateMs = new Date(`${trackEntries[0].date}T00:00:00`).getTime();
+      for (const entry of trackEntries) {
+        const entryMs = new Date(`${entry.date}T00:00:00`).getTime();
+        const diffDays = Number.isFinite(entryMs - firstDateMs)
+          ? Math.max(0, Math.floor((entryMs - firstDateMs) / (1000 * 60 * 60 * 24)))
+          : 0;
+        const weekIdx = Math.min(3, Math.floor(diffDays / 7));
+        buckets[weekIdx] += entry.revenueUsd;
+      }
+    }
 
-    const firstDateMs = new Date(`${trackEntries[0].date}T00:00:00`).getTime();
-    for (const entry of trackEntries) {
-      const entryMs = new Date(`${entry.date}T00:00:00`).getTime();
-      const diffDays = Number.isFinite(entryMs - firstDateMs)
-        ? Math.max(0, Math.floor((entryMs - firstDateMs) / (1000 * 60 * 60 * 24)))
-        : 0;
-      const weekIdx = Math.min(3, Math.floor(diffDays / 7));
-      buckets[weekIdx] += entry.revenueUsd;
+    for (const item of trackLedgerEntries) {
+      const idx = Math.max(0, Math.min(3, item.weekIndex));
+      buckets[idx] += item.amountUsd;
     }
     return buckets;
-  }, [trackEntries]);
+  }, [trackEntries, trackLedgerEntries]);
 
   const weeklyChartData: WeekChartRow[] = useMemo(() => {
     let cumulativeDone = 0;
@@ -345,9 +381,13 @@ export function MilestoneDashboard({
         0
       );
 
-      const loggedUsd = entries
+      const insightsUsd = entries
         .filter((e) => e.trackId === track.id)
         .reduce((sum, e) => sum + e.revenueUsd, 0);
+      const ledgerUsd = ledgerEntries
+        .filter((e) => e.trackId === track.id)
+        .reduce((sum, e) => sum + e.amountUsd, 0);
+      const loggedUsd = insightsUsd + ledgerUsd;
 
       return {
         trackId: track.id,
@@ -357,11 +397,16 @@ export function MilestoneDashboard({
         loggedUsd: Math.round(loggedUsd * 100) / 100,
       };
     });
-  }, [completedChecklistIds, completedWeeklyTaskIds, entries]);
+  }, [completedChecklistIds, completedWeeklyTaskIds, entries, ledgerEntries]);
 
   const summary = useMemo(() => {
     const targetSum = weeklyTargets.reduce((a, b) => a + b, 0);
-    const actualSum = trackEntries.reduce((a, e) => a + e.revenueUsd, 0);
+    const actualSum =
+      Math.round(
+        (trackEntries.reduce((a, e) => a + e.revenueUsd, 0) +
+          trackLedgerEntries.reduce((a, e) => a + e.amountUsd, 0)) *
+          100
+      ) / 100;
 
     const totalWeeklyTasks = weeklyChartData.reduce(
       (sum, row) => sum + row.totalTasks,
@@ -408,6 +453,7 @@ export function MilestoneDashboard({
   }, [
     weeklyTargets,
     trackEntries,
+    trackLedgerEntries,
     weeklyChartData,
     selectedTrack,
     completedChecklistIds,
@@ -629,7 +675,13 @@ export function MilestoneDashboard({
       {/* 4-Column KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-950">
         <div className="p-4 sm:p-5">
-          <div className="text-xs text-zinc-400">4-Week Revenue Target</div>
+          <div className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
+            <span>4-Week Revenue Target</span>
+            <QuickTip
+              title="Editable Weekly Goals"
+              tip={`Sum of your Week 01–04 USD goals for ${selectedTrack.shortName}. Edit any week's Target (USD) below to match your schedule.`}
+            />
+          </div>
           <div className="mt-1 text-2xl font-bold text-zinc-50 font-mono tabular-nums">
             ${summary.targetSum.toLocaleString()}
           </div>
@@ -639,7 +691,15 @@ export function MilestoneDashboard({
         </div>
 
         <div className="p-4 sm:p-5">
-          <div className="text-xs text-zinc-400">Actual Logged Revenue</div>
+          <div className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
+            <span>Actual Logged Revenue</span>
+            <QuickTip
+              title="Real Logged Earnings Only"
+              tip="Shows only real USD amounts you logged via 'Log Real Revenue' or the Daily Insights tab—never simulated or padded."
+              actionLabel="Log Real Revenue Now"
+              onAction={() => setShowLogForm(true)}
+            />
+          </div>
           <div className="mt-1 text-2xl font-bold text-emerald-400 font-mono tabular-nums">
             ${summary.actualSum.toLocaleString()}
           </div>
@@ -649,7 +709,13 @@ export function MilestoneDashboard({
         </div>
 
         <div className="p-4 sm:p-5">
-          <div className="text-xs text-zinc-400">Weekly Milestones Done</div>
+          <div className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
+            <span>Weekly Milestones Done</span>
+            <QuickTip
+              title="Weekly Execution Pace"
+              tip="Aim for 75%+ task completion each week before increasing revenue targets. Consistent shipping unlocks monetization eligibility."
+            />
+          </div>
           <div className="mt-1 text-2xl font-bold text-blue-400 font-mono tabular-nums">
             {summary.weeklyPct}%
           </div>
@@ -659,7 +725,13 @@ export function MilestoneDashboard({
         </div>
 
         <div className="p-4 sm:p-5">
-          <div className="text-xs text-zinc-400">Track Roadmap SOP</div>
+          <div className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
+            <span>Track Roadmap SOP</span>
+            <QuickTip
+              title={`${selectedTrack.shortName} Core Steps`}
+              tip={`Reflects completed action items across all 6 step-by-step modules in ${selectedTrack.shortName}.`}
+            />
+          </div>
           <div className="mt-1 text-2xl font-bold text-zinc-100 font-mono tabular-nums">
             {summary.sopPct}%
           </div>
@@ -903,8 +975,16 @@ export function MilestoneDashboard({
             >
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs font-semibold text-blue-400">
-                    {wk.week}
+                  <span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-blue-400">
+                    <span>{wk.week}</span>
+                    <QuickTip
+                      title={`${wk.week} Execution Advice`}
+                      tip={`Priority: ${wk.focusTitle}. Deliverable: ${wk.targetMetric}. ${
+                        row.targetUsd > 0 && row.actualUsd >= row.targetUsd
+                          ? 'Target achieved for this week—keep logging daily insights!'
+                          : 'Complete the tasks below and log real USD earned to update the chart.'
+                      }`}
+                    />
                   </span>
                   <span className="font-mono text-xs text-emerald-400 tabular-nums">
                     {row.completionPct}% done

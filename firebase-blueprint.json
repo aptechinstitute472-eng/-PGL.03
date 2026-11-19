@@ -1,0 +1,253 @@
+{
+  "entities": {
+    "UserWorkspaceState": {
+      "title": "User Workspace State",
+      "description": "Stores user progress checklists, weekly milestone completions, active track selection, and language preferences.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Authenticated user UID.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "selectedTrackId": {
+          "type": "string",
+          "description": "Currently active income track ID.",
+          "maxLength": 40,
+          "pattern": "^[a-z0-9\\-]+$"
+        },
+        "languageMode": {
+          "type": "string",
+          "enum": ["english", "roman_urdu", "bilingual"],
+          "description": "AI mentor response language preference."
+        },
+        "uiLanguage": {
+          "type": "string",
+          "enum": ["en", "roman_urdu"],
+          "description": "Global site UI language switch."
+        },
+        "completedChecklistIds": {
+          "type": "array",
+          "description": "Completed SOP checklist item IDs."
+        },
+        "completedWeeklyTaskIds": {
+          "type": "array",
+          "description": "Completed 4-week milestone task IDs."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": ["uid", "selectedTrackId", "languageMode", "uiLanguage", "completedChecklistIds", "completedWeeklyTaskIds", "updatedAt"]
+    },
+    "LedgerEntry": {
+      "title": "Earnings Ledger Entry",
+      "description": "Individual daily or weekly payout logged by the user for a track.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "trackId": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "cadence": {
+          "type": "string",
+          "enum": ["daily", "weekly"]
+        },
+        "weekIndex": {
+          "type": "number"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "taskTitle": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "amountUsd": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "trackId", "cadence", "weekIndex", "date", "taskTitle", "source", "amountUsd", "createdAt"]
+    },
+    "WithdrawalRecord": {
+      "title": "Payout Withdrawal Record",
+      "description": "Tracks platform withdrawals across Payoneer, Wise, local banks, and mobile wallets.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["Payoneer", "Wise", "Local Bank (IBFT)", "JazzCash / Easypaisa", "Upwork / Fiverr Direct"]
+        },
+        "platformSource": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "grossUsd": {
+          "type": "number"
+        },
+        "feeUsd": {
+          "type": "number"
+        },
+        "fxRate": {
+          "type": "number"
+        },
+        "netPkr": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Cleared"]
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "referenceNote": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "method", "platformSource", "grossUsd", "feeUsd", "fxRate", "netPkr", "status", "date", "referenceNote", "createdAt"]
+    },
+    "JournalEntry": {
+      "title": "Success Journal Entry",
+      "description": "Daily wins and reflections logged by the user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "trackId": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "reflection": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "tags": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "trackId", "date", "reflection", "tags", "createdAt"]
+    },
+    "EnrollmentRecord": {
+      "title": "Earning Enrollment Record",
+      "description": "User plan registration & enrollment confirmation details.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "planId": {
+          "type": "string",
+          "enum": ["starter", "pro", "agency"]
+        },
+        "planName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "priceUsd": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "pricePkr": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "buyerName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "buyerContact": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "preferredTrack": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "paymentMethod": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "ticketCode": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Submitted", "Confirmed"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "planId", "planName", "priceUsd", "pricePkr", "buyerName", "buyerContact", "preferredTrack", "paymentMethod", "ticketCode", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/workspace/state": {
+      "schema": { "$ref": "#/entities/UserWorkspaceState" },
+      "description": "Owner-scoped workspace state document for checklists, weekly milestones, and language preferences."
+    },
+    "/users/{userId}/ledgerEntries/{entryId}": {
+      "schema": { "$ref": "#/entities/LedgerEntry" },
+      "description": "Owner-scoped earnings ledger payout entries."
+    },
+    "/users/{userId}/withdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/WithdrawalRecord" },
+      "description": "Owner-scoped payout withdrawal tracker records."
+    },
+    "/users/{userId}/journalEntries/{journalId}": {
+      "schema": { "$ref": "#/entities/JournalEntry" },
+      "description": "Owner-scoped daily success journal reflections."
+    },
+    "/users/{userId}/enrollments/{enrollmentId}": {
+      "schema": { "$ref": "#/entities/EnrollmentRecord" },
+      "description": "Owner-scoped earning registration and checkout records."
+    }
+  }
+}

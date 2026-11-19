@@ -21,6 +21,7 @@ import type { LanguageMode } from './MentorPanel';
 import { StepVideoWalkthrough } from './StepVideoWalkthrough';
 import { ContentTemplateStudio } from './ContentTemplateStudio';
 import { InsightsMilestones } from './InsightsMilestones';
+import { QuickTip } from './QuickTip';
 
 type WorkspaceTab =
   | 'roadmap'
@@ -133,7 +134,13 @@ export function DepartmentWorkspace({
           </div>
 
           <div className="shrink-0 text-right">
-            <div className="text-xs text-zinc-400">Track Completion</div>
+            <div className="inline-flex items-center justify-end gap-1.5 text-xs text-zinc-400">
+              <span>Track Completion</span>
+              <QuickTip
+                title={`${department.shortName} SOP Progress`}
+                tip={`${progressPct}% complete (${completedInTrack} of ${totalChecklistItems} tasks). Complete all 6 steps sequentially before scaling ad spend or client outreach.`}
+              />
+            </div>
             <div className="text-2xl font-bold text-zinc-50 font-mono tabular-nums">
               {progressPct}%
             </div>
@@ -197,50 +204,59 @@ export function DepartmentWorkspace({
                       : 'border-zinc-800 bg-zinc-950/50 hover:border-zinc-700'
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSelectStep(step)}
-                    className="flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span
-                        className={`font-mono text-xs font-semibold tabular-nums shrink-0 ${
-                          isStepComplete
-                            ? 'text-emerald-400'
-                            : isExpanded
-                            ? 'text-blue-400'
-                            : 'text-zinc-400'
-                        }`}
-                      >
-                        {step.stepNumber}.
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-zinc-100 truncate">
-                          {step.title}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-zinc-400 mt-0.5">
-                          <span className="tabular-nums">{step.duration}</span>
-                          <span aria-hidden="true">·</span>
-                          <span className="tabular-nums">
-                            {stepDoneCount}/{step.checklist.length} tasks
-                          </span>
-                          {isStepComplete && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="font-medium text-emerald-400">
-                                Completed
-                              </span>
-                            </>
-                          )}
+                  <div className="flex items-center justify-between gap-2 px-4 py-3.5">
+                    <button
+                      type="button"
+                      onClick={() => onSelectStep(step)}
+                      className="flex flex-1 items-center justify-between gap-3 text-left min-w-0"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          className={`font-mono text-xs font-semibold tabular-nums shrink-0 ${
+                            isStepComplete
+                              ? 'text-emerald-400'
+                              : isExpanded
+                              ? 'text-blue-400'
+                              : 'text-zinc-400'
+                          }`}
+                        >
+                          {step.stepNumber}.
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-zinc-100 truncate">
+                            {step.title}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-zinc-400 mt-0.5">
+                            <span className="tabular-nums">{step.duration}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="tabular-nums">
+                              {stepDoneCount}/{step.checklist.length} tasks
+                            </span>
+                            {isStepComplete && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="font-medium text-emerald-400">
+                                  Completed
+                                </span>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    {isExpanded ? (
-                      <ChevronUp className="h-4 w-4 text-zinc-400 shrink-0" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-zinc-400 shrink-0" />
-                    )}
-                  </button>
+                      {isExpanded ? (
+                        <ChevronUp className="h-4 w-4 text-zinc-400 shrink-0" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-zinc-400 shrink-0" />
+                      )}
+                    </button>
+
+                    <QuickTip
+                      title={`Step ${step.stepNumber} Quick Tip`}
+                      tip={`${step.objective}. Deliverable: ${step.deliverable}.`}
+                      actionLabel={`Ask AI Mentor About Step ${step.stepNumber}`}
+                      onAction={() => onCoachStep(step)}
+                    />
+                  </div>
 
                   {isExpanded && (
                     <div className="border-t border-zinc-800 px-4 py-4 space-y-4">
@@ -254,8 +270,12 @@ export function DepartmentWorkspace({
                       </div>
 
                       <div className="space-y-2">
-                        <div className="text-xs font-semibold text-zinc-300">
-                          Action Checklist
+                        <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-300">
+                          <span>Action Checklist</span>
+                          <QuickTip
+                            title="Verify Real Output"
+                            tip="Check items off only after producing the real deliverable in your dashboard or workspace—your Milestone Dashboard updates live."
+                          />
                         </div>
                         <div className="space-y-1.5">
                           {step.checklist.map((item, idx) => {

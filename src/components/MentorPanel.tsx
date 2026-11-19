@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type { CourseStep, DepartmentTrack } from '../data/departments';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { QuickTip } from './QuickTip';
 
 export type LanguageMode = 'english' | 'roman_urdu' | 'bilingual';
 export type MentorMode = 'step_coach' | 'full_dossier' | 'deliverable_builder';
@@ -308,31 +309,37 @@ export function MentorPanel({
             ))}
           </div>
 
-          <div
-            className="inline-flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-0.5"
-            role="group"
-            aria-label="Coaching mode"
-          >
-            {(
-              [
-                { id: 'step_coach', label: 'Step Coach' },
-                { id: 'full_dossier', label: 'Full Info' },
-                { id: 'deliverable_builder', label: 'Builder' },
-              ] as const
-            ).map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                onClick={() => onMentorModeChange(mode.id)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  mentorMode === mode.id
-                    ? 'bg-blue-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                {mode.label}
-              </button>
-            ))}
+          <div className="inline-flex items-center gap-1.5">
+            <div
+              className="inline-flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-0.5"
+              role="group"
+              aria-label="Coaching mode"
+            >
+              {(
+                [
+                  { id: 'step_coach', label: 'Step Coach' },
+                  { id: 'full_dossier', label: 'Full Info' },
+                  { id: 'deliverable_builder', label: 'Builder' },
+                ] as const
+              ).map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => onMentorModeChange(mode.id)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    mentorMode === mode.id
+                      ? 'bg-blue-600 text-white'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            <QuickTip
+              title="AI Mentor Modes"
+              tip="Step Coach walks through one micro-step at a time. Full Info audits eligibility & payouts. Builder writes ready-to-paste scripts, gigs & n8n JSON."
+            />
           </div>
         </div>
       </div>

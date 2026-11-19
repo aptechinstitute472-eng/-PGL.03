@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -36,6 +37,173 @@ interface ContentGenerateRequest {
   topic: string;
   languageMode: 'english' | 'roman_urdu' | 'bilingual';
   targetFormat: string;
+}
+
+interface LeaderboardAggregateRecord {
+  participantId: string;
+  anonAlias: string;
+  month: string;
+  monthlyTotalUsd: number;
+  primaryTrackId: string;
+  entryCount: number;
+  updatedAt: string;
+}
+
+interface LeaderboardSyncRequest {
+  participantId?: unknown;
+  anonAlias?: unknown;
+  month?: unknown;
+  monthlyTotalUsd?: unknown;
+  primaryTrackId?: unknown;
+  entryCount?: unknown;
+}
+
+const LEADERBOARD_DATA_DIR = path.resolve(__dirname, 'data');
+const LEADERBOARD_FILE = path.join(
+  LEADERBOARD_DATA_DIR,
+  'leaderboard-aggregates.json'
+);
+
+function getCurrentMonthKey(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+function isValidMonthKey(val: string): boolean {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(val);
+}
+
+function isValidParticipantId(val: string): boolean {
+  return /^[a-zA-Z0-9_-]{8,64}$/.test(val);
+}
+
+function sanitizeAnonAlias(raw: string, participantId: string): string {
+  const stripped = raw
+    .replace(/@\S+/g, '')
+    .replace(/[^a-zA-Z0-9 #_-]/g, '')
+    .trim()
+    .slice(0, 24);
+  if (stripped.length >= 3) {
+    return stripped;
+  }
+  const suffix = participantId.slice(-4).toUpperCase();
+  return `Earner #${suffix}`;
+}
+
+function readLeaderboardStore(): LeaderboardAggregateRecord[] {
+  try {
+    if (!fs.existsSync(LEADERBOARD_FILE)) {
+      return [];
+    }
+    const raw = fs.readFileSync(LEADERBOARD_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is LeaderboardAggregateRecord =>
+        Boolean(item) &&
+        typeof item === 'object' &&
+        typeof (item as LeaderboardAggregateRecord).participantId === 'string' &&
+        typeof (item as LeaderboardAggregateRecord).anonAlias === 'string' &&
+        typeof (item as LeaderboardAggregateRecord).month === 'string' &&
+        typeof (item as LeaderboardAggregateRecord).monthlyTotalUsd === 'number' &&
+        typeof (item as LeaderboardAggregateRecord).primaryTrackId === 'string' &&
+        typeof (item as LeaderboardAggregateRecord).entryCount === 'number'
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeLeaderboardStore(records: LeaderboardAggregateRecord[]): void {
+  if (!fs.existsSync(LEADERBOARD_DATA_DIR)) {
+    fs.mkdirSync(LEADERBOARD_DATA_DIR, { recursive: true });
+  }
+  const tempFile = `${LEADERBOARD_FILE}.tmp`;
+  fs.writeFileSync(tempFile, JSON.stringify(records, null, 2), 'utf8');
+  fs.renameSync(tempFile, LEADERBOARD_FILE);
+}
+
+function buildLeaderboardPayload(
+  records: LeaderboardAggregateRecord[],
+  month: string,
+  participantId?: string
+) {
+  const activeForMonth = records
+    .filter((r) => r.month === month && r.monthlyTotalUsd > 0)
+    .sort((a, b) => {
+      if (b.monthlyTotalUsd !== a.monthlyTotalUsd) {
+        return b.monthlyTotalUsd - a.monthlyTotalUsd;
+      }
+      if (b.entryCount !== a.entryCount) {
+        return b.entryCount - a.entryCount;
+      }
+      return a.updatedAt.localeCompare(b.updatedAt);
+    });
+
+  const communityTotalUsd =
+    Math.round(
+      activeForMonth.reduce((sum, r) => sum + r.monthlyTotalUsd, 0) * 100
+    ) / 100;
+
+  const topFive = activeForMonth.slice(0, 5).map((rec, idx) => ({
+    rank: idx + 1,
+    anonAlias: rec.anonAlias,
+    primaryTrackId: rec.primaryTrackId,
+    monthlyTotalUsd: Math.round(rec.monthlyTotalUsd * 100) / 100,
+    entryCount: rec.entryCount,
+    updatedAt: rec.updatedAt,
+    isCurrentUser: Boolean(participantId && rec.participantId === participantId),
+  }));
+
+  let currentUserPosition: {
+    rank: number;
+    anonAlias: string;
+    primaryTrackId: string;
+    monthlyTotalUsd: number;
+    entryCount: number;
+    gapToFirstUsd: number;
+    gapToTopFiveUsd: number;
+  } | null = null;
+
+  if (participantId) {
+    const idx = activeForMonth.findIndex(
+      (r) => r.participantId === participantId
+    );
+    if (idx !== -1) {
+      const me = activeForMonth[idx];
+      const topUsd = activeForMonth[0]?.monthlyTotalUsd ?? me.monthlyTotalUsd;
+      const fifthUsd =
+        activeForMonth[4]?.monthlyTotalUsd ?? me.monthlyTotalUsd;
+      currentUserPosition = {
+        rank: idx + 1,
+        anonAlias: me.anonAlias,
+        primaryTrackId: me.primaryTrackId,
+        monthlyTotalUsd: Math.round(me.monthlyTotalUsd * 100) / 100,
+        entryCount: me.entryCount,
+        gapToFirstUsd: Math.max(
+          0,
+          Math.round((topUsd - me.monthlyTotalUsd) * 100) / 100
+        ),
+        gapToTopFiveUsd:
+          idx < 5
+            ? 0
+            : Math.max(
+                0,
+                Math.round((fifthUsd - me.monthlyTotalUsd) * 100) / 100
+              ),
+      };
+    }
+  }
+
+  return {
+    month,
+    totalParticipants: activeForMonth.length,
+    communityTotalUsd,
+    topFive,
+    currentUserPosition,
+  };
 }
 
 function getGenAIClient(): GoogleGenAI | null {
@@ -88,10 +256,115 @@ function buildSystemInstruction(payload: MentorChatRequest): string {
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ ok: true, service: '#PGL.03 — Earning Guide by ArYan JAN BaLocH' });
+  });
+
+  app.get('/api/leaderboard', (req: Request, res: Response) => {
+    const rawMonth =
+      typeof req.query.month === 'string' ? req.query.month : getCurrentMonthKey();
+    const month = isValidMonthKey(rawMonth) ? rawMonth : getCurrentMonthKey();
+    const rawParticipantId =
+      typeof req.query.participantId === 'string'
+        ? req.query.participantId
+        : undefined;
+    const participantId =
+      rawParticipantId && isValidParticipantId(rawParticipantId)
+        ? rawParticipantId
+        : undefined;
+
+    const records = readLeaderboardStore();
+    res.json(buildLeaderboardPayload(records, month, participantId));
+  });
+
+  app.post('/api/leaderboard/sync', (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as LeaderboardSyncRequest;
+    const participantId =
+      typeof body.participantId === 'string' ? body.participantId.trim() : '';
+    const rawMonth =
+      typeof body.month === 'string' ? body.month.trim() : getCurrentMonthKey();
+    const month = isValidMonthKey(rawMonth) ? rawMonth : '';
+
+    if (!isValidParticipantId(participantId) || !month) {
+      res.status(400).json({
+        error: 'Valid anonymous participantId and YYYY-MM month are required.',
+      });
+      return;
+    }
+
+    const monthlyTotalUsd = Number(body.monthlyTotalUsd);
+    const entryCount = Number(body.entryCount);
+    if (
+      !Number.isFinite(monthlyTotalUsd) ||
+      monthlyTotalUsd < 0 ||
+      !Number.isFinite(entryCount) ||
+      entryCount < 0
+    ) {
+      res.status(400).json({ error: 'Invalid monthly aggregate totals.' });
+      return;
+    }
+
+    const rawTrackId =
+      typeof body.primaryTrackId === 'string' ? body.primaryTrackId.trim() : '';
+    const primaryTrackId = /^[a-z0-9-]{1,32}$/.test(rawTrackId)
+      ? rawTrackId
+      : 'general';
+    const rawAlias =
+      typeof body.anonAlias === 'string' ? body.anonAlias : '';
+    const anonAlias = sanitizeAnonAlias(rawAlias, participantId);
+
+    const records = readLeaderboardStore().filter(
+      (r) => !(r.participantId === participantId && r.month === month)
+    );
+
+    const roundedTotal = Math.round(monthlyTotalUsd * 100) / 100;
+    const roundedCount = Math.floor(entryCount);
+
+    if (roundedTotal > 0 && roundedCount > 0) {
+      records.push({
+        participantId,
+        anonAlias,
+        month,
+        monthlyTotalUsd: roundedTotal,
+        primaryTrackId,
+        entryCount: roundedCount,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    writeLeaderboardStore(records);
+    res.json(buildLeaderboardPayload(records, month, participantId));
+  });
+
+  app.delete('/api/leaderboard/sync', (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { participantId?: unknown; month?: unknown };
+    const participantId =
+      typeof body.participantId === 'string'
+        ? body.participantId.trim()
+        : typeof req.query.participantId === 'string'
+        ? req.query.participantId.trim()
+        : '';
+    const rawMonth =
+      typeof body.month === 'string'
+        ? body.month.trim()
+        : typeof req.query.month === 'string'
+        ? req.query.month.trim()
+        : getCurrentMonthKey();
+    const month = isValidMonthKey(rawMonth) ? rawMonth : getCurrentMonthKey();
+
+    if (!isValidParticipantId(participantId)) {
+      res.status(400).json({ error: 'Valid participantId is required.' });
+      return;
+    }
+
+    const records = readLeaderboardStore().filter(
+      (r) => !(r.participantId === participantId && r.month === month)
+    );
+    writeLeaderboardStore(records);
+    res.json(buildLeaderboardPayload(records, month, participantId));
   });
 
   app.post('/api/content/generate', async (req: Request, res: Response) => {
@@ -255,6 +528,193 @@ async function startServer() {
     }
   });
 
+  app.post('/api/quiz/recommend', async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as {
+      dailyHours?: string;
+      strength?: string;
+      cameraComfort?: string;
+      device?: string;
+      goalTimeline?: string;
+      languageMode?: string;
+      availableTracks?: Array<{
+        id: string;
+        title: string;
+        timeToFirstDollar: string;
+        earningModel: string;
+      }>;
+    };
+
+    const ai = getGenAIClient();
+    if (!ai) {
+      res.status(503).json({
+        error:
+          'Gemini API key is not configured on the server. Please add GEMINI_API_KEY in Settings > Secrets.',
+      });
+      return;
+    }
+
+    const trackListText = Array.isArray(body.availableTracks)
+      ? body.availableTracks
+          .map(
+            (t) =>
+              `- ${t.id}: ${t.title} (${t.timeToFirstDollar}, Model: ${t.earningModel})`
+          )
+          .join('\n')
+      : '- youtube, facebook, instagram, tiktok, n8n, freelancing, video-ugc, digital-commerce';
+
+    const langDirective =
+      body.languageMode === 'roman_urdu'
+        ? 'Write headline, rationale, and all 7 firstWeekPlan steps in clear, natural Roman Urdu.'
+        : 'Write headline, rationale, and all 7 firstWeekPlan steps in crisp English with friendly operational clarity.';
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: `Recommend the single best earning track from the list below for this user profile:
+- Daily Hours: ${body.dailyHours ?? '2-3 hours'}
+- Strength: ${body.strength ?? 'Tech & AI'}
+- Camera Comfort: ${body.cameraComfort ?? 'Faceless'}
+- Device: ${body.device ?? 'Laptop'}
+- Priority Goal: ${body.goalTimeline ?? 'Fast cashflow'}
+
+Available Tracks:
+${trackListText}
+
+${langDirective}`,
+        config: {
+          systemInstruction:
+            'You are a pragmatic career & monetization advisor for #PGL.03 Earning Guide. Always select recommendedTrackId and runnerUpTrackId strictly from the provided track IDs, give realistic USD targets (never exaggerated promises), and produce exactly 7 concrete daily starter steps.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              recommendedTrackId: {
+                type: Type.STRING,
+                description:
+                  'Exact track id from the provided list (e.g. n8n, freelancing, youtube, facebook, instagram, tiktok, video-ugc, digital-commerce).',
+              },
+              runnerUpTrackId: {
+                type: Type.STRING,
+                description: 'Second best track id from the provided list.',
+              },
+              matchScore: {
+                type: Type.INTEGER,
+                description: 'Match percentage between 78 and 98.',
+              },
+              headline: {
+                type: Type.STRING,
+                description: 'Short 1-sentence reason why this track fits.',
+              },
+              rationale: {
+                type: Type.STRING,
+                description:
+                  '2-3 sentences explaining device/time/strength alignment and monetization path.',
+              },
+              firstWeekPlan: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Exactly 7 specific action items for Day 1 through Day 7.',
+              },
+              estimated30DayTarget: {
+                type: Type.STRING,
+                description: 'Realistic Day 30 target string, e.g. $150 - $400 USD.',
+              },
+              estimated90DayTarget: {
+                type: Type.STRING,
+                description: 'Realistic Day 90 target string, e.g. $800 - $1,800 USD.',
+              },
+            },
+            required: [
+              'recommendedTrackId',
+              'runnerUpTrackId',
+              'matchScore',
+              'headline',
+              'rationale',
+              'firstWeekPlan',
+              'estimated30DayTarget',
+              'estimated90DayTarget',
+            ],
+          },
+        },
+      });
+
+      const parsed = JSON.parse((response.text ?? '{}').trim());
+      res.json(parsed);
+    } catch (err: unknown) {
+      res.status(500).json({
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed to generate AI track recommendation.',
+      });
+    }
+  });
+
+  app.post('/api/enrollments', (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const buyerName =
+      typeof body.buyerName === 'string' ? body.buyerName.trim() : '';
+    const buyerContact =
+      typeof body.buyerContact === 'string' ? body.buyerContact.trim() : '';
+    const planId = typeof body.planId === 'string' ? body.planId.trim() : '';
+    const planName =
+      typeof body.planName === 'string' ? body.planName.trim() : '';
+
+    if (!buyerName || !buyerContact || !planId || !planName) {
+      res.status(400).json({
+        error: 'Name, contact, and plan selection are required.',
+      });
+      return;
+    }
+
+    const ticketCode = `PGL-${Math.random()
+      .toString(36)
+      .slice(2, 6)
+      .toUpperCase()}-${Date.now().toString().slice(-4)}`;
+
+    const record = {
+      id: `enr_${Date.now()}`,
+      ticketCode,
+      planId,
+      planName,
+      priceUsd: typeof body.priceUsd === 'string' ? body.priceUsd : '$49',
+      pricePkr: typeof body.pricePkr === 'string' ? body.pricePkr : 'Rs. 13,500',
+      buyerName: buyerName.slice(0, 120),
+      buyerContact: buyerContact.slice(0, 120),
+      preferredTrack:
+        typeof body.preferredTrack === 'string'
+          ? body.preferredTrack.slice(0, 120)
+          : 'YouTube',
+      paymentMethod:
+        typeof body.paymentMethod === 'string'
+          ? body.paymentMethod.slice(0, 80)
+          : 'JazzCash / Easypaisa',
+      status: 'Submitted',
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      const enrollmentsFile = path.join(LEADERBOARD_DATA_DIR, 'enrollments.json');
+      if (!fs.existsSync(LEADERBOARD_DATA_DIR)) {
+        fs.mkdirSync(LEADERBOARD_DATA_DIR, { recursive: true });
+      }
+      let existing: unknown[] = [];
+      if (fs.existsSync(enrollmentsFile)) {
+        const parsed = JSON.parse(fs.readFileSync(enrollmentsFile, 'utf8'));
+        if (Array.isArray(parsed)) existing = parsed;
+      }
+      existing.unshift(record);
+      fs.writeFileSync(
+        enrollmentsFile,
+        JSON.stringify(existing.slice(0, 200), null, 2),
+        'utf8'
+      );
+      res.status(201).json(record);
+    } catch {
+      res.status(500).json({ error: 'Unable to record enrollment request.' });
+    }
+  });
+
   if (isProduction) {
     const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
@@ -269,13 +729,18 @@ async function startServer() {
   } else {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        allowedHosts: true,
+        ws: { server: httpServer },
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`#PGL.03 listening on http://0.0.0.0:${PORT}`);
   });
 }
